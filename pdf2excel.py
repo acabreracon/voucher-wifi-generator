@@ -3,6 +3,8 @@ from tkinter import filedialog, messagebox
 import pdfplumber
 from PIL import Image, ImageDraw, ImageFont
 from pdf2image import convert_from_path
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 import re
 import os
 import math
@@ -39,15 +41,8 @@ def seleccionar_pdf_voucher():
     if ruta:
         entrada_voucher.set(ruta)
 
-def procesar():
-    ruta_codigos = entrada_codigos.get()
-    ruta_voucher = entrada_voucher.get()
-
-    if not ruta_codigos or not ruta_voucher:
-        messagebox.showwarning("Advertencia", "Selecciona ambos archivos PDF.")
-        return
-
-    with pdfplumber.open(ruta_codigos) as pdf:
+def extraer_codigos(ruta_pdf):
+    with pdfplumber.open(ruta_pdf) as pdf:
         paginas = []
         for page in pdf.pages:
             texto = page.extract_text()
@@ -55,14 +50,67 @@ def procesar():
                 paginas.append(texto.strip())
         texto_completo = " ".join(paginas)
         texto_completo = re.sub(r'\s+', ' ', texto_completo)
+    return re.findall(r'\b\d{5}-\d{5}\b', texto_completo)
 
-    codigos = re.findall(r'\b\d{5}-\d{5}\b', texto_completo)
+def generar_excel():
+    ruta_codigos = entrada_codigos.get()
+    if not ruta_codigos:
+        messagebox.showwarning("Advertencia", "Selecciona el PDF con los códigos.")
+        return
 
+    codigos = extraer_codigos(ruta_codigos)
     if not codigos:
         messagebox.showinfo("Info", "No se encontraron códigos en el PDF.")
         return
 
-    # 2. Convertir voucher PDF a imagen
+    # Crear Excel
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Códigos"
+
+    header_fill = PatternFill("solid", start_color="1F4E79")
+    header_font = Font(bold=True, color="FFFFFF", name="Arial", size=11)
+    ws['A1'] = "#"
+    ws['B1'] = "Código"
+    for cell in [ws['A1'], ws['B1']]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+
+    for i, codigo in enumerate(codigos, 1):
+        ws.append([i, codigo])
+        ws.cell(row=i+1, column=1).alignment = Alignment(horizontal='center')
+        ws.cell(row=i+1, column=2).alignment = Alignment(horizontal='center')
+        ws.cell(row=i+1, column=1).font = Font(name="Arial", size=10)
+        ws.cell(row=i+1, column=2).font = Font(name="Arial", size=10)
+        if i % 2 == 0:
+            fill = PatternFill("solid", start_color="D6E4F0")
+            ws.cell(row=i+1, column=1).fill = fill
+            ws.cell(row=i+1, column=2).fill = fill
+
+    ws.column_dimensions['A'].width = 8
+    ws.column_dimensions['B'].width = 18
+
+    descargas = os.path.join(os.path.expanduser("~"), "Downloads")
+    ruta_salida = os.path.join(descargas, "vouchersWifi.xlsx")
+    wb.save(ruta_salida)
+
+    messagebox.showinfo("¡Listo!", f"Se exportaron {len(codigos)} códigos.\nGuardado en:\n{ruta_salida}")
+
+def generar_pdf():
+    ruta_codigos = entrada_codigos.get()
+    ruta_voucher = entrada_voucher.get()
+
+    if not ruta_codigos or not ruta_voucher:
+        messagebox.showwarning("Advertencia", "Selecciona ambos archivos PDF.")
+        return
+
+    codigos = extraer_codigos(ruta_codigos)
+    if not codigos:
+        messagebox.showinfo("Info", "No se encontraron códigos en el PDF.")
+        return
+
+    # Convertir voucher PDF a imagen
     try:
         imagenes = convert_from_path(ruta_voucher, dpi=150, poppler_path=r"C:\poppler-25.12.0\Library\bin")
         template = imagenes[0].convert("RGBA")
@@ -72,17 +120,14 @@ def procesar():
 
     template_resized = template.resize((VOUCHER_W, VOUCHER_H), Image.LANCZOS)
 
-    # 3. Configurar fuente
+    # Configurar fuente
     font_size = max(10, int(VOUCHER_H * 0.065))
     try:
-        font = ImageFont.truetype("arial.ttf", font_size)
+        font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", font_size)
     except:
-        try:
-            font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+        font = ImageFont.load_default()
 
-    # 4. Generar páginas
+    # Generar páginas
     total_paginas = math.ceil(len(codigos) / VOUCHERS_PER_PAGE)
     paginas_img = []
 
@@ -121,7 +166,7 @@ def procesar():
 
             page_img.paste(voucher.convert("RGB"), (x, y))
 
-        # Líneas de corte punteadas
+        # Líneas de corte
         draw_page = ImageDraw.Draw(page_img)
         for col in range(1, COLS):
             lx = MARGIN + col * (VOUCHER_W + MARGIN) - MARGIN // 2
@@ -132,10 +177,8 @@ def procesar():
 
         paginas_img.append(page_img)
 
-    # 5. Guardar PDF en Descargas
-    #nombre = os.path.splitext(os.path.basename(ruta_codigos))[0]
     descargas = os.path.join(os.path.expanduser("~"), "Downloads")
-    ruta_salida = os.path.join(descargas, "VouchersWifi.pdf")
+    ruta_salida = os.path.join(descargas, "vouchersWifi.pdf")
 
     paginas_img[0].save(
         ruta_salida,
@@ -152,7 +195,7 @@ def procesar():
 # ── Interfaz ─────────────────────────────────────────────────────────────────
 app = tk.Tk()
 app.title("Generador de Vouchers WiFi")
-app.geometry("480x180")
+app.geometry("500x230")
 app.resizable(False, False)
 
 entrada_codigos = tk.StringVar()
@@ -166,10 +209,24 @@ tk.Label(app, text="PDF diseño voucher:").grid(row=1, column=0, padx=10, pady=5
 tk.Entry(app, textvariable=entrada_voucher, width=38).grid(row=1, column=1, padx=5)
 tk.Button(app, text="Buscar", command=seleccionar_pdf_voucher).grid(row=1, column=2, padx=5)
 
+tk.Label(app, text="(Solo necesario para generar PDF)", fg="gray", font=("Arial", 8)).grid(
+    row=2, column=1, sticky="w", padx=5
+)
+
+# Botones de acción
+frame_botones = tk.Frame(app)
+frame_botones.grid(row=3, column=0, columnspan=3, pady=20)
+
 tk.Button(
-    app, text="Generar Vouchers PDF",
-    command=procesar,
-    bg="#1F4E79", fg="white", width=25
-).grid(row=2, column=0, columnspan=3, pady=20)
+    frame_botones, text="📄  Generar PDF con diseño",
+    command=generar_pdf,
+    bg="#1F4E79", fg="white", width=22, height=2
+).pack(side="left", padx=10)
+
+tk.Button(
+    frame_botones, text="📊  Generar Excel de códigos",
+    command=generar_excel,
+    bg="#1E6B2E", fg="white", width=22, height=2
+).pack(side="left", padx=10)
 
 app.mainloop()
