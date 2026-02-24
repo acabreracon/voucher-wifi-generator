@@ -1,0 +1,15 @@
+# Entornos virtuales
+venv/
+.venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# SO / IDE
+.vscode/
+.idea/
+
+# PDFs generados
+*.pdf
